@@ -10,6 +10,7 @@
     "author": "Frank Hellwig",
     "license": "MIT",
     "dependencies": {
-        "strformat": "0.0.7"
+        "strformat": "0.0.7",
+        "is-absolute-url": "2.0.0"
     }
 }

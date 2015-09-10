@@ -15,6 +15,8 @@ var http = require('http'),
     https = require('https'),
     querystring = require('querystring'),
     strformat = require('strformat'),
+    isAbsoluteUrl = require('is-absolute-url'),
+    url = require('url'),
     slice = Array.prototype.slice,
     AAD_LOGIN_HOSTNAME = 'login.windows.net',
     GRAPH_API_HOSTNAME = 'graph.windows.net',
@@ -100,6 +102,23 @@ GraphAPI.prototype.delete = function(ref, callback) {
 // PRIVATE
 //-----------------------------------------------------------------------------
 
+// The deltaLink is used for differential queries. Return undefined
+// if it's not in the response
+function getDeltaLink(response) {
+  var deltaLink = response['aad.deltaLink'] || "";
+  return url.parse(deltaLink, true).query.deltaLink;
+}
+
+// The nextLink can be found in 'odata.nextLink' for normal queries
+// or in 'aad.nextLink' for differential queries.  Return undefined
+// if it's not in the response
+//
+// Note that the nextLink format is a path in the normal case and
+// an absolute URL, sans api-version, in the differential case
+function getNextLink(response) {
+  return response['odata.nextLink'] || response['aad.nextLink'];
+}
+
 // Only return the value and the correct number of arguments.
 function wrap(callback) {
     return function(err, response) {
@@ -109,7 +128,7 @@ function wrap(callback) {
             // Handle 204 responses by not adding a second argument.
             callback(null);
         } else if (response.value) {
-            callback(null, response.value);
+            callback(null, response.value, getDeltaLink(response));
         } else {
             callback(null, response);
         }
@@ -127,11 +146,11 @@ GraphAPI.prototype._getObjects = function(ref, objects, objectType, callback) {
                 objects.push(value[i]);
             }
         }
-        var nextLink = response['odata.nextLink'];
+        var nextLink = getNextLink(response);
         if (nextLink) {
             self._getObjects(nextLink, objects, objectType, callback);
         } else {
-            callback(null, objects);
+            callback(null, objects, getDeltaLink(response));
         }
     });
 }
@@ -162,10 +181,18 @@ GraphAPI.prototype._request = function(method, ref, data, callback) {
 // by getting another access token and repeating the request.
 GraphAPI.prototype._requestWithRetry = function(method, ref, data, secondAttempt, callback) {
     var self = this;
-    var path = ['/'];
-    path.push(self.tenant);
-    path.push('/');
-    path.push(ref);
+    var path;
+
+    // handle absolute URLs by assuming they have the complete path except for the api-version, which
+    // is the case when paging through the results of a differential query (for example)
+    if (isAbsoluteUrl(ref)) {
+      path = [url.parse(ref).path];
+    } else {
+      path = ['/'];
+      path.push(self.tenant);
+      path.push('/');
+      path.push(ref);
+    }
     if (ref.indexOf('?') < 0) {
         path.push('?');
     } else {
