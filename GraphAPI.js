@@ -16,6 +16,8 @@ var http = require('http'),
     querystring = require('querystring'),
     strformat = require('strformat'),
     isAbsoluteUrl = require('is-absolute-url'),
+    async = require('async'),
+    _ = require('underscore'),
     url = require('url'),
     slice = Array.prototype.slice,
     AAD_LOGIN_HOSTNAME = 'login.windows.net',
@@ -47,6 +49,19 @@ GraphAPI.prototype.get = function(ref, callback) {
     ref = strformat.apply(null, slice.call(arguments, 0, -1));
     callback = slice.call(arguments, -1)[0];
     this._request('GET', ref, null, wrap(callback));
+}
+
+/**
+ * HTTPS GET
+ * Will repeatedly make GET requests until there are no more results.
+ * Callback is called for each object, with number of concurrent callbacks
+ * limited by @concurrency {number}
+ */
+GraphAPI.prototype.getPages = function(ref, concurrency, callback) {
+  ref = strformat.apply(null, slice.call(arguments, 0, -2));
+  concurrency = slice.call(arguments, -2, -1)[0];
+  callback = slice.call(arguments, -1)[0];
+  this._getPages(ref, concurrency, callback);
 }
 
 /**
@@ -153,6 +168,77 @@ GraphAPI.prototype._getObjects = function(ref, objects, objectType, callback) {
             callback(null, objects, getDeltaLink(response));
         }
     });
+}
+
+// If the results of the GET request is too large, the Graph API will return them
+// a page a time.  Each page will have up to 200 DirectoryObject entities and up to 3000
+// DirectoryLinkChange entities.
+//
+// The API currently only supports the following values for 'ref':
+//   - directoryObjects (returns all changes, including DirectoryLinkChange)
+//   - users (returns only objects of type User)
+//   - contacts (returns only objects of type Contact)
+//   - groups (returns only objects of type Group)
+//
+// Note: The Group objects only contain the basic information is returned and that
+// DirectoryLinkChange objects only notify that something has changed in a relationship
+// between two entities.  You will need to do subsequent GET requests to discover
+// what happened
+GraphAPI.prototype._getPages = function(ref, concurrency, callback) {
+    var self = this;
+    var isLastPage = false;
+    var deltaLink;
+    var q;
+
+    // allow callbacks to work in parallel
+    q = async.queue(function (task, queueCallback) {
+        // return the pages as we get them, aynchronously
+        callback(null, task.page, false, deltaLink, queueCallback);
+    }, concurrency);
+
+    async.whilst(
+        // stop condition
+        function() {
+            return !isLastPage;
+        },
+
+        // worker
+        function (callback) {
+            self._request('GET', ref, null, function(err, response) {
+                if (err) {
+                  callback(err);
+                  return;
+                }
+                ref = getNextLink(response);
+                isLastPage = _.isUndefined(ref);
+                if (isLastPage) deltaLink = getDeltaLink(response);
+
+                // queue up this page of objects
+                q.push({page: response.value}, function (err) {
+                    if (err) callback(err);
+                });
+
+                callback(null);
+              })
+        },
+
+        // done
+        function(err) {
+            if (err) {
+              callback(err)
+              return;
+            }
+            // wait until queue is empty
+            q.drain = function() {
+                // return an empty array of objects because the callback
+                // has already been called per page
+                callback(null, [], true, deltaLink);
+            }
+            // push an empty task to ensure drain callback is triggered
+            // (in case the queue was empty before setting drain)
+            q.push([])
+        }
+    );
 }
 
 // If there is an access token, perform the request. If not, get an
