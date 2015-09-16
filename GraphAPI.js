@@ -16,8 +16,10 @@ var http = require('http'),
     querystring = require('querystring'),
     strformat = require('strformat'),
     isAbsoluteUrl = require('is-absolute-url'),
+    urljoin = require('url-join'),
     url = require('url'),
     slice = Array.prototype.slice,
+    _ = require('underscore'),
     AAD_LOGIN_HOSTNAME = 'login.windows.net',
     GRAPH_API_HOSTNAME = 'graph.windows.net',
     DEFAULT_API_VERSION = '1.5';
@@ -182,27 +184,23 @@ GraphAPI.prototype._request = function(method, ref, data, callback) {
 GraphAPI.prototype._requestWithRetry = function(method, ref, data, secondAttempt, callback) {
     var self = this;
     var path;
+    var refUrl;
+    var refOptions;
 
-    // handle absolute URLs by assuming they have the complete path except for the api-version, which
-    // is the case when paging through the results of a differential query (for example)
-    if (isAbsoluteUrl(ref)) {
-      path = [url.parse(ref).path];
-    } else {
-      path = ['/'];
-      path.push(self.tenant);
-      path.push('/');
-      path.push(ref);
+    // fyi - parsing the url properly escapes query params
+    refUrl = url.parse(ref, true);
+
+    // add the api-version
+    refOptions = _.extend(refUrl.query, { 'api-version' : self.apiVersion });
+    refUrl.search = querystring.stringify(refOptions);
+
+    // no need to prefix the path with the tenant if the ref is absolute,
+    if (!isAbsoluteUrl(ref)) {
+        refUrl.pathname = urljoin('/', self.tenant, refUrl.pathname);
     }
-    if (ref.indexOf('?') < 0) {
-        path.push('?');
-    } else {
-        path.push('&');
-    }
-    path.push('api-version=');
-    path.push(self.apiVersion);
     var options = {
         hostname: GRAPH_API_HOSTNAME,
-        path: path.join(''),
+        path: url.format(refUrl),
         method: method,
         headers: {
             'Authorization': 'Bearer ' + self.accessToken
