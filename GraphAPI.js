@@ -175,7 +175,8 @@ GraphAPI.prototype._getObjects = function(ref, objects, objectType, callback) {
 // a page a time.  Each page will have up to 200 DirectoryObject entities and up to 3000
 // DirectoryLinkChange entities.
 //
-// The API currently only supports the following values for 'ref':
+// Note that the differential API currently only supports the following
+// values for 'ref':
 //   - directoryObjects (returns all changes, including DirectoryLinkChange)
 //   - users (returns only objects of type User)
 //   - contacts (returns only objects of type Contact)
@@ -184,12 +185,30 @@ GraphAPI.prototype._getObjects = function(ref, objects, objectType, callback) {
 // Note: The Group objects only contain the basic information is returned and that
 // DirectoryLinkChange objects only notify that something has changed in a relationship
 // between two entities.  You will need to do subsequent GET requests to discover
-// what happened
+// what happened.
+//
+// callback(err, page_of_results, deltaLink, queueCallback) is called for each
+// page of objects and it *must* call queueCallback(err, done) after processing
+// results.  If done is true, paging will stop even if there are still more pages
+// to retrieve.  Doing this for a differential query is not recommended since it
+// prevents the deltaLink from being updated, but it can be handy if you want to
+// limit the number of results you want to retrieve.
+//
 GraphAPI.prototype._getPages = function(ref, concurrency, callback) {
     var self = this;
-    var isLastPage = false;
+    var stopQueue
     var deltaLink;
     var q;
+    var abortQueue = false;
+
+    function morePagesLeft() {
+        return _.isString(ref)
+    }
+
+    function stopPaging() {
+        q.kill();
+        abortQueue = true;
+    }
 
     // allow callbacks to work in parallel
     q = async.queue(function (task, queueCallback) {
@@ -197,38 +216,36 @@ GraphAPI.prototype._getPages = function(ref, concurrency, callback) {
         callback(null, task.page, false, deltaLink, queueCallback);
     }, concurrency);
 
-    async.whilst(
-        // stop condition
-        function() {
-            return !isLastPage;
-        },
-
+    async.doWhilst(
         // worker
         function (callback) {
             self._request('GET', ref, null, function(err, response) {
-                if (err) {
-                  callback(err);
-                  return;
-                }
-                ref = getNextLink(response);
-                isLastPage = _.isUndefined(ref);
-                if (isLastPage) deltaLink = getDeltaLink(response);
+                if (err) return callback(err);
 
-                // queue up this page of objects
-                q.push({page: response.value}, function (err) {
-                    if (err) callback(err);
-                });
+                ref = getNextLink(response);
+                deltaLink = getDeltaLink(response);
+
+                if (!abortQueue) {
+                  // queue up this page of objects
+                  q.push({page: response.value}, function (err, done) {
+                      if (err) return callback(err);
+                      if (done) stopPaging();
+                  });
+                }
 
                 callback(null);
               })
         },
 
+        // stop condition
+        function () {
+          return morePagesLeft() && !abortQueue;
+        },
+
         // done
         function(err) {
-            if (err) {
-              callback(err)
-              return;
-            }
+            if (err) return callback(err);
+
             // wait until queue is empty
             q.drain = function() {
                 // return an empty array of objects because the callback
