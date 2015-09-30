@@ -249,10 +249,17 @@ GraphAPI.prototype._requestAccessToken = function(callback) {
     });
 }
 
+function isJson(res) {
+    return res.headers['content-type'].split(';')[0] == 'application/json';
+}
+
 // Our own wrapper around the https.request method.
 function httpsRequest(options, content, callback) {
     options.headers = options.headers || {};
-    options.headers['Accept'] = 'application/json';
+
+    // indicate we want responses to be json (not xml), but we need to
+    // accept all other media types to retrieve thumbnailPhotos (for example)
+    options.headers['Accept'] = 'application/json, */*';
     if (!callback) {
         callback = content;
         content = null;
@@ -267,7 +274,11 @@ function httpsRequest(options, content, callback) {
         content = null;
     }
     var req = https.request(options, function(res) {
-        res.setEncoding('utf8');
+        if (isJson(res)) {
+            res.setEncoding('utf8');
+        } else {
+            res.setEncoding('binary');
+        }
         var buf = [];
         res.on('data', function(data) {
             buf.push(data);
@@ -275,7 +286,9 @@ function httpsRequest(options, content, callback) {
         res.on('end', function() {
             var data = buf.join('');
             if (data.length > 0) {
-                data = JSON.parse(data);
+                if (isJson(res)) {
+                    data = JSON.parse(data);
+                }
             } else {
                 data = null;
             }
