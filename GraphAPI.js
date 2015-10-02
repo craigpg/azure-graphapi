@@ -16,6 +16,7 @@ var http = require('http'),
     querystring = require('querystring'),
     strformat = require('strformat'),
     isAbsoluteUrl = require('is-absolute-url'),
+    contentType = require('content-type'),
     urljoin = require('url-join'),
     url = require('url'),
     slice = Array.prototype.slice,
@@ -250,7 +251,7 @@ GraphAPI.prototype._requestAccessToken = function(callback) {
 }
 
 function isJson(res) {
-    return res.headers['content-type'].split(';')[0] == 'application/json';
+    return contentType.parse(res).type == 'application/json';
 }
 
 // Our own wrapper around the https.request method.
@@ -274,6 +275,12 @@ function httpsRequest(options, content, callback) {
         content = null;
     }
     var req = https.request(options, function(res) {
+
+        // if there's no data, then simply return
+        if (res.statusCode === 204) {
+            return callback(null);
+        }
+
         if (isJson(res)) {
             res.setEncoding('utf8');
         } else {
@@ -292,9 +299,7 @@ function httpsRequest(options, content, callback) {
             } else {
                 data = null;
             }
-            if (res.statusCode === 204) {
-                callback(null); // no data
-            } else if (res.statusCode >= 200 && res.statusCode <= 299) {
+            if (res.statusCode >= 200 && res.statusCode <= 299) {
                 callback(null, data); // success
             } else {
                 if (data && data.error_description) {
