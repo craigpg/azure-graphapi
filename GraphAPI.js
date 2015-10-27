@@ -127,13 +127,24 @@ function wrap(callback) {
     return function(err, response) {
         if (err) {
             callback(err);
-        } else if (typeof response === 'undefined') {
+        } else if (_.isUndefined(response)) {
             // Handle 204 responses by not adding a second argument.
             callback(null);
-        } else if (response.value) {
-            callback(null, response.value, getDeltaLink(response));
         } else {
-            callback(null, response);
+            var callbackArgs = [err];
+            var deltaLink = getDeltaLink(response);
+
+            // add the value (if it exists), or the response itself
+            callbackArgs.push(_.has(response, 'value')
+              ? response.value
+              : response);
+
+            // add the deltaLink (if it exists)
+            if (_.isString(deltaLink)) {
+                callbackArgs.push(deltaLink);
+            }
+
+            callback.apply(null, callbackArgs);
         }
     }
 }
@@ -153,7 +164,12 @@ GraphAPI.prototype._getObjects = function(ref, objects, objectType, callback) {
         if (nextLink) {
             self._getObjects(nextLink, objects, objectType, callback);
         } else {
-            callback(null, objects, getDeltaLink(response));
+          var callbackArgs = [null, objects];
+          var deltaLink = getDeltaLink(response);
+          if (_.isString(deltaLink)) {
+              callbackArgs.push(deltaLink);
+          }
+          callback.apply(null, callbackArgs);
         }
     });
 }
