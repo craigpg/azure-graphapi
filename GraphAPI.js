@@ -208,6 +208,7 @@ GraphAPI.prototype._getPages = function(ref, concurrency, callback) {
     function stopPaging() {
         q.kill();
         abortQueue = true;
+        callback(null, [], true, deltaLink);
     }
 
     // allow callbacks to work in parallel
