@@ -203,7 +203,7 @@ GraphAPI.prototype._getObjects = function(ref, objects, objectType, callback) {
 // between two entities.  You will need to do subsequent GET requests to discover
 // what happened.
 //
-// callback(err, page_of_results, deltaLink, queueCallback) is called for each
+// callback(err, pageOfResults, noMorePages, [deltaLink], queueCallback) is called for each
 // page of objects and it *must* call queueCallback(err, done) after processing
 // results.  If done is true, paging will stop even if there are still more pages
 // to retrieve.  Doing this for a differential query is not recommended since it
@@ -217,6 +217,16 @@ GraphAPI.prototype._getPages = function(ref, concurrency, callback) {
     var q;
     var abortQueue = false;
 
+    // return an array of arguments to return to callback, including
+    // the deltaLink only if it exists
+    function callbackArgs(err, page, noMorePages) {
+      var args = slice.call(arguments);
+      if (_.isString(deltaLink)) {
+        args.push(deltaLink);
+      }
+      return args;
+    }
+
     function morePagesLeft() {
         return _.isString(ref)
     }
@@ -224,12 +234,14 @@ GraphAPI.prototype._getPages = function(ref, concurrency, callback) {
     function stopPaging() {
         q.kill();
         abortQueue = true;
+        callback.apply(null, callbackArgs(null, [], true));
     }
 
     // allow callbacks to work in parallel
     q = async.queue(function (task, queueCallback) {
         // return the pages as we get them, aynchronously
-        callback(null, task.page, false, deltaLink, queueCallback);
+        callback.apply(null,
+          callbackArgs(null, task.page, false).concat(queueCallback));
     }, concurrency);
 
     async.doWhilst(
@@ -266,7 +278,7 @@ GraphAPI.prototype._getPages = function(ref, concurrency, callback) {
             q.drain = function() {
                 // return an empty array of objects because the callback
                 // has already been called per page
-                callback(null, [], true, deltaLink);
+                callback.apply(null, callbackArgs(null, [], true));
             }
             // push an empty task to ensure drain callback is triggered
             // (in case the queue was empty before setting drain)
