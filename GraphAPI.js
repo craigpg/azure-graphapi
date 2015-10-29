@@ -139,15 +139,15 @@ function getNextLink(response) {
 // Only return the value and the correct number of arguments.
 function wrap(callback) {
     return function(err, response) {
-        var callbackArgs = [err];
-        var deltaLink = getDeltaLink(response);
-
         if (err) {
             callback(err);
         } else if (_.isUndefined(response)) {
             // Handle 204 responses by not adding a second argument.
             callback(null);
         } else {
+            var callbackArgs = [err];
+            var deltaLink = getDeltaLink(response);
+
             // add the value (if it exists), or the response itself
             callbackArgs.push(_.has(response, 'value')
               ? response.value
@@ -177,7 +177,12 @@ GraphAPI.prototype._getObjects = function(ref, objects, objectType, callback) {
         if (nextLink) {
             self._getObjects(nextLink, objects, objectType, callback);
         } else {
-            callback(null, objects, getDeltaLink(response));
+          var callbackArgs = [null, objects];
+          var deltaLink = getDeltaLink(response);
+          if (_.isString(deltaLink)) {
+              callbackArgs.push(deltaLink);
+          }
+          callback.apply(null, callbackArgs);
         }
     });
 }
